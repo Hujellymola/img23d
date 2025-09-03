@@ -1,9 +1,15 @@
-#!/usr/bin/env python3
 """
-Run HoloPart completion on segmented parts.
-Environment: holopart conda environment
-
-Modified version of inference_holopart.py that saves individual completed parts.
+Run HoloPart completion on a multi-part GLB produced by convert_partfield_to_holopart.py.
+- Inputs:
+    --input-scene: parts_for_holopart.glb
+    --output-dir
+    (optional) --weights-dir for HoloPart
+- Outputs:
+    <output-dir>/completed_scene.glb
+    <output-dir>/completion_metadata.json
+    <output-dir>/parts/<part_xxx_completed.obj>
+Notes:
+- uses HoloPart's pipeline API. Ensure the HoloPart repo is in PYTHONPATH.
 """
 
 import argparse
@@ -202,6 +208,7 @@ def run_holopart_with_part_saving(
         # Save individual completed part
         completed_path = os.path.join(output_dir, f"{part_name}_completed.obj")
         completed_mesh.export(completed_path)
+        # trimesh.Scene([completed_mesh]).export(os.path.join(output_dir, f"{part_name}_completed.glb"))
         
         mesh_list.append(completed_mesh)
         
@@ -285,10 +292,9 @@ def main():
     with open(metadata_path, 'w') as f:
         json.dump(completion_metadata, f, indent=2)
 
-    print(f"Completion finished!")
-    print(f"Completed scene: {output_scene_path}")
-    print(f"Individual parts saved in: {args.output_dir}")
-    print(f"Metadata: {metadata_path}")
+    print(f"[OK] Completed scene: {output_scene_path}")
+    print(f"[OK] Per-Part OBJs saved in: {args.output_dir}")
+    print(f"[OK] Metadata: {metadata_path}")
 
 
 if __name__ == "__main__":
