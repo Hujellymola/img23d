@@ -1,7 +1,5 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-Transfer original baseColor textures to HoloPart-completed parts (refined).
+Transfer original baseColor textures to HoloPart-completed parts.
 Inputs:
   --step1-dir: contains conversion_metadata.json, parts_for_holopart.glb, original_basecolor.png
   --step2-dir: contains completion_metadata.json, completed_scene.glb, parts/<part_xxx_completed.obj|glb>
@@ -11,7 +9,7 @@ Key logic:
   2) ICP align completed part to original part (rigid).
   3) Classify completed faces by multi-sample distance vote -> old/new.
   4) Keep original faces (with original UV), keep only "new" faces from completed.
-  5) Unwrap new faces with xatlas; build a horizontal 2W×H atlas:
+  5) Unwrap new faces with xatlas; build a horizontal 2W x H atlas:
        - left half: original texture (no resample), uv_orig'=(0.5*u, v)
        - right half: new-region uv_new'=(0.5*u+0.5, v)
   6) Export per-part textured GLB (embedded texture) + final scene GLB.
@@ -25,9 +23,11 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import trimesh
-from PIL import Image
+from PIL import Image, ImageDraw
 import xatlas
 import open3d as o3d
+import matplotlib.pyplot as plt
+
 
 
 # -----------------------------
@@ -177,6 +177,58 @@ def _merge_geo_and_build_atlas_horizontal(
 
 
 # -----------------------------
+# Viz: UV wireframe + verts + Coverage mask
+# -----------------------------
+def _save_uv_debug_images(
+    tex_img: Image.Image,
+    uv: np.ndarray,          # (N,2) in [0,1]
+    faces: np.ndarray,       # (M,3)
+    out_uv_png: Path,
+    out_cov_png: Path,
+    title: str,
+) -> None:
+    tex_np = np.array(tex_img.convert("RGBA"))
+    H, W = tex_np.shape[0], tex_np.shape[1]
+    tris = uv[faces]  # (M,3,2)
+
+    # Figure 1: UV wireframe + verts
+    plt.figure(figsize=(8, 4.5))
+    plt.imshow(tex_np, extent=[0,1,1,0])
+    # edges
+    for tri in tris:
+        plt.plot([tri[0,0], tri[1,0]], [1-tri[0,1], 1-tri[1,1]], color='red', linewidth=0.15)
+        plt.plot([tri[1,0], tri[2,0]], [1-tri[1,1], 1-tri[2,1]], color='red', linewidth=0.15)
+        plt.plot([tri[2,0], tri[0,0]], [1-tri[2,1], 1-tri[0,1]], color='red', linewidth=0.15)
+    # verts
+    plt.scatter(uv[:,0], 1-uv[:,1], s=1, c='cyan', alpha=0.6)
+    plt.title(f"{title}  (edges:red, verts:cyan)")
+    plt.xlim(0,1); plt.ylim(0,1); plt.gca().set_aspect('equal', adjustable='box')
+    plt.xlabel("U"); plt.ylabel("V"); plt.grid(True, linewidth=0.2)
+    out_uv_png.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_uv_png, dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # Figure 2: coverage mask
+    mask = Image.new("L", (W, H), 0)
+    draw = ImageDraw.Draw(mask)
+    for tri in tris:
+        pts = [(tri[0,0]*W, (1-tri[0,1])*H),
+               (tri[1,0]*W, (1-tri[1,1])*H),
+               (tri[2,0]*W, (1-tri[2,1])*H)]
+        draw.polygon(pts, fill=255)
+    mask_np = np.array(mask)
+
+    plt.figure(figsize=(8, 4.5))
+    plt.imshow(tex_np, extent=[0,1,1,0])
+    plt.imshow(mask_np, cmap='Greens', alpha=0.35, extent=[0,1,1,0], vmin=0, vmax=255)
+    plt.title(f"{title}  (coverage: green)")
+    plt.xlim(0,1); plt.ylim(0,1); plt.gca().set_aspect('equal', adjustable='box')
+    plt.xlabel("U"); plt.ylabel("V")
+    plt.savefig(out_cov_png, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    
+# -----------------------------
 # Export helpers
 # -----------------------------
 def _export_part_textured(mesh: trimesh.Trimesh, atlas: Image.Image, out_glb: Path, out_png: Path, node_name: str) -> None:
@@ -273,13 +325,18 @@ def main():
             eps_ratio=args.eps_ratio,
             old_vote_ratio=args.old_vote_ratio
         )
-
+        part_glb = parts_out_dir / f"{pname}_textured.glb"
+        part_png = parts_out_dir / f"{pname}_texture.png"
+        part_uv_png = parts_out_dir / f"{pname}_uv_overlay.png"
+        part_cov_png = parts_out_dir / f"{pname}_coverage_overlay.png"
+        
         if not np.any(new_mask):
             # No new faces: keep original part as-is with original texture
-            part_glb = parts_out_dir / f"{pname}_textured.glb"
-            part_png = parts_out_dir / f"{pname}_texture.png"
             # Save debug texture (original)
             orig_tex.save(part_png)
+            _save_uv_debug_images(orig_tex, np.asarray(orig_part.visual.uv, np.float32),
+                                  np.asarray(orig_part.faces, np.int64),
+                                  part_uv_png, part_cov_png, title=f"{pname} (original only)")
             trimesh.Scene([orig_part.copy()]).export(str(part_glb))
             part_output_glbs.append(part_glb)
             report[pname] = {
@@ -301,8 +358,11 @@ def main():
         part_glb = parts_out_dir / f"{pname}_textured.glb"
         part_png = parts_out_dir / f"{pname}_texture.png"
         _export_part_textured(merged, atlas_img, part_glb, part_png, node_name=pname)
+        _save_uv_debug_images(atlas_img,
+                              np.asarray(merged.visual.uv, np.float32),
+                              np.asarray(merged.faces, np.int64),
+                              part_uv_png, part_cov_png, title=f"{pname} (orig-left, new-right)")
         part_output_glbs.append(part_glb)
-
         report[pname] = {
             "mode": "merged_original_plus_new",
             "original_faces": int(len(orig_part.faces)),
