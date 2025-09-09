@@ -149,14 +149,14 @@ if __name__ == "__main__":
     MODEL = os.path.expanduser(args.model)
     OUT   = os.path.expanduser(args.out)
 
-
     # === 用户参数 ===
     # MODEL   = os.path.expanduser("~/Downloads/mug_-_firefox.glb")
     # MODEL   = os.path.expanduser("~/Downloads/nescafe_mug_.glb")
     # OUT     = os.path.expanduser("~/UAD/output/new_cube_2")
     VIEWS   = 8
-    R, E, O = 1.0, 1.0, 0.0    # radius, elevation, look_offset
-    CS, CE  = 0.1, 10.0         # clip start/end
+    # Initial placeholders; will be recomputed after normalization
+    R, E, O = 1.0, 1.0, 0.0    # radius (xy), elevation (z), look_offset
+    CS, CE  = 0.1, 10.0         # clip start/end (will be scaled from camera distance)
     SAMPLES = 64
     RES     = 448
 
@@ -183,243 +183,53 @@ if __name__ == "__main__":
             use_split_groups=False,
             use_image_search=True,
         )
-        # bpy.ops.import_scene.obj(
-        #     filepath=MODEL,
-        #     axis_forward='-Z',
-        #     axis_up='Y',
-        #     use_split_objects=True,
-        #     use_split_groups=True,
-        #     use_image_search=True,
-        # )
     else:
         raise ValueError(f"Unsupported model suffix: {ext}")
 
-    # objs = [o for o in bpy.data.objects if o.type == 'MESH']
-    # print("[INFO] Imported mesh objects:", [o.name for o in objs])
 
-    # new_meshes = [o for o in bpy.data.objects if o.type=='MESH' and o.name not in pre_objs]
-    # print(f"[INFO] Imported mesh objects: {[o.name for o in new_meshes]}")
-    # obj = new_meshes[0]  # 你这份就是单网格
-
-    # # 三角化
-    # bpy.context.view_layer.objects.active = obj
-    # bpy.ops.object.mode_set(mode='EDIT')
-    # bpy.ops.mesh.select_all(action='SELECT')
-    # bpy.ops.mesh.quads_convert_to_tris()   # 把四边面转成三角
-    # bpy.ops.object.mode_set(mode='OBJECT')
-
-    # # 按材质拆分为多个对象
-    # bpy.context.view_layer.objects.active = obj
-    # bpy.ops.object.mode_set(mode='EDIT')
-    # bpy.ops.mesh.select_all(action='SELECT')
-    # bpy.ops.mesh.separate(type='MATERIAL')  # 新建若干对象，每个对象只含一种材质
-    # bpy.ops.object.mode_set(mode='OBJECT')
-
-    # # 统计每个对象的面数（应接近你 OBJ 注释的 1754/1620/154/22/22）
-    # objs = [o for o in bpy.context.scene.objects if o.type=='MESH']
-    # grand = collections.Counter()
-    # for o in objs:
-    #     mats = o.data.materials
-    #     # 现在每个 o 通常只有 1 个材质
-    #     counts = collections.Counter(mats[p.material_index].name for p in o.data.polygons)
-    #     total = len(o.data.polygons)
-    #     print(f"[OBJ] {o.name}: tris={total}  mats={list(counts.items())}")
-    #     grand.update(counts)
-
-    # print("\n[TOTAL]")
-    # for k,v in grand.items():
-    #     print(f"  {k}: {v}")
-
-    # grand = collections.Counter()
-    # tris_total = 0
-    # for o in objs:
-    #     me = o.data
-    #     # 统计三角数（确保与 3572 对齐）
-    #     tris = sum(1 if len(me.polygons[i].vertices)==3 else 0 for i in range(len(me.polygons)))
-    #     tris_total += tris
-
-    #     mats = me.materials
-    #     counts = collections.Counter(mats[p.material_index].name for p in me.polygons)
-    #     print(f"\n[OBJ] {o.name}: polys={len(me.polygons)} tris(est)={tris}")
-    #     for k,v in counts.items():
-    #         print(f"  - {k}: {v}")
-
-    #     grand.update(counts)
-
-    # print("\n[TOTAL]")
-    # print("  polys sum:", sum(grand.values()))
-    # print("  tris  sum:", tris_total)
-    # for k,v in grand.items():
-    #     print(f"  {k}: {v}")
-
-    # # 这里是假设你已经把它放到了导入之前
-    # new_meshes = [o for o in bpy.data.objects if o.type == 'MESH' and o.name not in pre_objs]
-    # print(f"[INFO] Imported mesh objects: {[o.name for o in new_meshes]}")
-
-    # # --- 4) 逐对象统计“每个材质覆盖了多少面” ---
-    # grand = collections.Counter()
-    # for obj in new_meshes:
-    #     mats = obj.data.materials
-    #     counts = collections.Counter(mats[p.material_index].name for p in obj.data.polygons)
-    #     total = len(obj.data.polygons)
-    #     print(f"\n[OBJ] {obj.name}: faces={total}")
-    #     for name, cnt in counts.items():
-    #         print(f"  - {name}: {cnt}/{total} ({cnt/total:.1%})")
-    #     grand.update(counts)
-
-    # # --- 5) 汇总 & 断言关键材质是否被使用 ---
-    # print("\n[TOTAL]")
-    # total_faces = sum(grand.values())
-    # for name, cnt in grand.items():
-    #     print(f"  {name}: {cnt} ({cnt/total_faces:.1%})")
-
-    # # 需要检查的材质名（按你的 .mtl）
-    # targets = ["material_2_1_8", "material_4_2_8"]
-    # for t in targets:
-    #     used = grand.get(t, 0)
-    #     print(f"[CHECK] {t} used faces = {used}")
-    #     # 如果想在检测失败时直接报错，可启用下一行：
-    #     # assert used > 0, f"{t} 未被任何面使用"
-
-
-    # # 如果没提前保存 pre_objs，就退而求其次：取场景里所有 mesh
-    # if not new_meshes:
-    #     new_meshes = [o for o in bpy.context.scene.objects if o.type == 'MESH']
-
-    # print(f"[INFO] Imported mesh objects: {[o.name for o in new_meshes]}")
-
-    # # 逐对象统计材质覆盖
-    # grand_counts = collections.Counter()
-    # for o in new_meshes:
-    #     if not o.data or not o.data.materials: 
-    #         continue
-    #     mats = o.data.materials
-    #     local = collections.Counter(mats[p.material_index].name for p in o.data.polygons)
-    #     total = len(o.data.polygons)
-    #     print(f"[OBJ] {o.name}: faces={total}, mats={list(set(mats))}")
-    #     for k,v in local.items():
-    #         print(f"  - {k}: {v}/{total} ({v/total:.1%})")
-    #     grand_counts.update(local)
-
-    # # 全局汇总
-    # total_faces = sum(grand_counts.values())
-    # print("[TOTAL] faces:", total_faces)
-    # for k,v in grand_counts.items():
-    #     print(f"  {k}: {v} ({v/total_faces:.1%})")
-
-    # # 顺便打印一下材质里是否有贴图节点、贴图路径是否存在
-    # for mat in bpy.data.materials:
-    #     has_img = False; img_path=None; exists=False
-    #     if mat.use_nodes and mat.node_tree:
-    #         for n in mat.node_tree.nodes:
-    #             if n.type == 'TEX_IMAGE' and n.image and n.image.filepath:
-    #                 has_img = True
-    #                 img_path = bpy.path.abspath(n.image.filepath)
-    #                 exists = os.path.exists(img_path)
-    #                 break
-    #     print(f"[MAT] {mat.name:20s} | TEX_NODE={has_img} | IMG={img_path} | EXISTS={exists}")
-
-    # kd_map = parse_mtl_kd(MTL_PATH)
-
-    # for mat in bpy.data.materials:
-    #     # 确保节点材质与 Principled
-    #     if not mat.use_nodes:
-    #         mat.use_nodes = True
-    #     nt = mat.node_tree
-    #     nodes = nt.nodes
-    #     bsdf = next((n for n in nodes if n.type=='BSDF_PRINCIPLED'), None)
-    #     if not bsdf:
-    #         bsdf = nodes.new("ShaderNodeBsdfPrincipled")
-    #         out = next((n for n in nodes if n.type=='OUTPUT_MATERIAL'), None) or nodes.new("ShaderNodeOutputMaterial")
-    #         nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
-
-    #     # 优先寻找贴图
-    #     tex_nodes = [n for n in nodes if n.type=='TEX_IMAGE' and n.image and n.image.filepath]
-    #     linked = False
-    #     for t in tex_nodes:
-    #         path = bpy.path.abspath(t.image.filepath)
-    #         if os.path.exists(path):
-    #             nt.links.new(t.outputs.get('Color'), bsdf.inputs.get('Base Color'))
-    #             linked = True
-    #             break
-
-    #     # 没贴图 → 用 .mtl 的 Kd 兜底（若没有就给个中性灰）
-    #     if not linked:
-    #         if mat.name in kd_map:
-    #             r,g,b = kd_map[mat.name]
-    #             bsdf.inputs['Base Color'].default_value = (r, g, b, 1.0)
-    #         else:
-    #             bsdf.inputs['Base Color'].default_value = (0.8, 0.8, 0.8, 1.0)
-
-    # # # 2) 合并网格（只有>1个时）
-    # # objs = [o for o in bpy.context.scene.objects if o.type=='MESH']
-    # # bpy.ops.object.select_all(action='DESELECT')
-    # # for o in objs: o.select_set(True)
-    # # if objs:
-    # #     bpy.context.view_layer.objects.active = objs[0]
-    # # if len(objs) > 1:
-    # #     bpy.ops.object.join()
-    # obj = bpy.context.active_object
-
-    # # 3) UV：若无 UV 自动展开，否则贴图也显示不出来
-    # if obj and obj.type=='MESH':
-    #     me = obj.data
-    #     if not me.uv_layers:
-    #         bpy.ops.object.mode_set(mode='EDIT')
-    #         bpy.ops.mesh.select_all(action='SELECT')
-    #         bpy.ops.uv.smart_project(angle_limit=66.0, island_margin=0.02)
-    #         bpy.ops.object.mode_set(mode='OBJECT')
-    # debug_and_bind_materials()
-    
-
-    # for mat in bpy.data.materials:
-    #     has_img = False; img_path = None; img_exists = False
-    #     if mat.use_nodes and mat.node_tree:
-    #         for n in mat.node_tree.nodes:
-    #             if n.type == 'TEX_IMAGE' and n.image:
-    #                 has_img = True
-    #                 img_path = bpy.path.abspath(n.image.filepath) if n.image.filepath else None
-    #                 img_exists = os.path.exists(img_path) if img_path else False
-    #                 break
-    #     print(f"[MAT] {mat.name:20s} | TEX_NODE={has_img} | IMG={img_path} | EXISTS={img_exists}")
-
-    # # # —— 合并（如有必要）
-    # # objs = [o for o in bpy.context.scene.objects if o.type == 'MESH']
-    # # bpy.ops.object.select_all(action='DESELECT')
-    # # for o in objs: o.select_set(True)
-    # # if objs:
-    # #     bpy.context.view_layer.objects.active = objs[0]
-    # # if len(objs) > 1:
-    # #     bpy.ops.object.join()
-
-
-    # === 等比缩放导入的模型，使其包围盒在 [-1,1]^3 中 ===
-    objs = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
+    # === Normalize model ===
+    # 1) Merge all imported meshes into a single object
+    objs = [o for o in bpy.context.scene.objects if o.type == 'MESH']
     bpy.ops.object.select_all(action='DESELECT')
-    for obj in objs:
-        obj.select_set(True)
-        bpy.context.view_layer.objects.active = obj
-
-    bpy.ops.object.join()  # 将所有 mesh 合并成一个对象
+    for o in objs:
+        o.select_set(True)
+        bpy.context.view_layer.objects.active = o
+    if objs:
+        bpy.ops.object.join()
     obj = bpy.context.active_object
 
-    # 计算包围盒范围
-    # min_corner = np.min([obj.matrix_world @ Vector(corner) for corner in obj.bound_box], axis=0)
-    # max_corner = np.max([obj.matrix_world @ Vector(corner) for corner in obj.bound_box], axis=0)
+    # 2) Clear parent transforms (glTF often adds empties) and set origin to bounds center
+    try:
+        bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
+    except Exception:
+        pass
+    bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='BOUNDS')
 
-    # print("包围盒范围:", min_corner, max_corner)
-    # scale = 2.0 / max((max_corner - min_corner))  # 缩放到最大边为 2
-
-    # bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='BOUNDS')
-    # 平移到原点、缩放到 [-1,1]^3
-    # obj.location = (0, 0, 0)
-    # obj.location = (0, 0, 1)
-    # center = (min_corner + max_corner) / 2
-    # obj.location = -center
-    # bpy.ops.object.transform_apply(location=True, rotation=True, scale=False)
-    # obj.scale *= scale
-    # bpy.ops.object.transform_apply(location=True, scale=True, rotation=True)
-    # bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    # 3) Compute world-space bounding box and scale to a unit bounding sphere (radius=1)
+    corners = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
+    min_x = min(c.x for c in corners); max_x = max(c.x for c in corners)
+    min_y = min(c.y for c in corners); max_y = max(c.y for c in corners)
+    min_z = min(c.z for c in corners); max_z = max(c.z for c in corners)
+    dx = max_x - min_x; dy = max_y - min_y; dz = max_z - min_z
+    # Bounding sphere radius = half of bbox diagonal length
+    diag = (dx**2 + dy**2 + dz**2) ** 0.5
+    r_curr = max(diag * 0.5, 1e-6)
+    target_r = 1.0
+    s = target_r / r_curr
+    obj.scale = (obj.scale[0] * s, obj.scale[1] * s, obj.scale[2] * s)
+    bpy.ops.object.transform_apply(scale=True)
+    # Recompute after scaling (for safety)
+    corners = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
+    min_x = min(c.x for c in corners); max_x = max(c.x for c in corners)
+    min_y = min(c.y for c in corners); max_y = max(c.y for c in corners)
+    min_z = min(c.z for c in corners); max_z = max(c.z for c in corners)
+    dx = max_x - min_x; dy = max_y - min_y; dz = max_z - min_z
+    diag = (dx**2 + dy**2 + dz**2) ** 0.5
+    r_norm = max(diag * 0.5, 1e-6)  # should be near 1.0
+    # Compute world-space center for camera targeting and offsets
+    cx = (min_x + max_x) * 0.5
+    cy = (min_y + max_y) * 0.5
+    cz = (min_z + max_z) * 0.5
         
     # === 设置场景 ===
     scene = bpy.context.scene
@@ -441,11 +251,19 @@ if __name__ == "__main__":
 
     bpy.ops.object.camera_add(location=(0,-R,E), rotation=(math.radians(90),0,0))
     cam = bpy.context.object
-    cam.data.clip_start = CS
-    cam.data.clip_end   = CE
+    # Fix a reasonable FOV (vertical) and recompute a safe camera distance
+    cam.data.angle = math.radians(60.0)
+    fov = cam.data.angle  # vertical FOV (radians)
+    # Distance needed to fit a sphere of radius r_norm within view: D >= r / tan(fov/2)
+    safety = 1.15
+    D = (r_norm / max(math.tan(fov/2), 1e-6)) * safety
+    # Place initial camera at distance D on -Y axis, centered on the object
+    cam.location = (cx, cy - D, cz)
+    cam.data.clip_start = max(0.01, D * 0.05)
+    cam.data.clip_end   = D * 10.0
     scene.camera = cam
 
-    bpy.ops.object.empty_add(type='PLAIN_AXES', location=(0,0,O))
+    bpy.ops.object.empty_add(type='PLAIN_AXES', location=(cx, cy, cz + O))
     empty = bpy.context.object
     trk = cam.constraints.new("TRACK_TO")
     trk.target     = empty
@@ -477,104 +295,23 @@ if __name__ == "__main__":
     tree.links.new(rl.outputs["Depth"], dout.inputs[0])
 
     # === 预计算内参 ===
-    fov = cam.data.angle
     f = (RES/2)/math.tan(fov/2)
     intr = [[f,0,RES/2],[0,f,RES/2],[0,0,1]]
     params = {"intrinsic": intr, "views": {}}
 
-    # # === 循环渲染 ===
-    # for i in range(VIEWS):
-    #     # 1) 设置帧号
-    #     scene.frame_set(i)
-    #     # 2) 布置相机环绕
-    #     th = 2*math.pi*i/VIEWS
-    #     cam.location = (R*math.sin(th), R*math.cos(th), E)
-    #     # 3) 渲染（会同时输出 rgb_##.png 和 depth_##.exr）
-    #     scene.render.image_settings.file_format = 'PNG'
-    #     scene.render.filepath = os.path.join(OUT, f"rgb_{i:02d}.png")
-    #     bpy.ops.render.render(write_still=True)
-    #     print("Saved RGB:", f"rgb_{i:02d}.png")
-    #     # 4) 读对应的 EXR
-    #     exr = os.path.join(OUT, f"depth_{i:02d}.exr")
-    #     img = bpy.data.images.load(exr, check_existing=True)
-    #     flat = np.array(img.pixels[:]); bpy.data.images.remove(img)
-    #     depth = flat[0::4].reshape((RES,RES))
-    #     depth = np.flipud(depth)
-    #     np.save(os.path.join(OUT, f"depth_{i:02d}.npy"), depth)
-    #     vis = (depth - depth.min())/(depth.ptp()+1e-8)
-    #     imageio.imwrite(os.path.join(OUT, f"depth_vis_{i:02d}.png"),
-    #                     (vis*255).astype('uint8'))
-    #     # 5) 存外参
-    #     params["views"][f"{i:02d}"] = np.array(cam.matrix_world.inverted()).tolist()
-
-    # # === 写 camera.json ===
-    # with open(os.path.join(OUT, "camera.json"), "w") as f:
-    #     json.dump(params, f, indent=2)
-
-    # print("✅ 全部渲染完成，输出在", OUT)
-
-    # # === 循环渲染 ===
-    # # 改为从 cube 的 8 个顶点采样相机位置
-    # cube_vertices = [
-    #     (-1, -1, -1),
-    #     (-1, -1,  1),
-    #     (-1,  1, -1),
-    #     (-1,  1,  1),
-    #     ( 1, -1, -1),
-    #     ( 1, -1,  1),
-    #     ( 1,  1, -1),
-    #     ( 1,  1,  1),
-    # ]
-
-    # for i in range(VIEWS):
-    #     scene.frame_set(i)
-
-    #     # === 设置相机位置为 cube 的 8 个角上的方向向量
-    #     dx, dy, dz = cube_vertices[i]
-    #     cam.location = (R * dx, R * dy, R * dz)
-    #     cam.keyframe_insert(data_path="location")
-
-    #     # === 注视目标点
-    #     bpy.ops.object.constraint_add(type='TRACK_TO')
-    #     cam.constraints["Track To"].target = empty
-    #     cam.constraints["Track To"].track_axis = 'TRACK_NEGATIVE_Z'
-    #     cam.constraints["Track To"].up_axis = 'UP_Y'
-
-    #     # === 渲染 RGB ===
-    #     scene.render.image_settings.file_format = 'PNG'
-    #     scene.render.filepath = os.path.join(OUT, f"rgb_{i:02d}.png")
-    #     bpy.ops.render.render(write_still=True)
-    #     print("Saved RGB:", f"rgb_{i:02d}.png")
-
-    #     # === 读 EXR 深度图 ===
-    #     exr = os.path.join(OUT, f"depth_{i:02d}.exr")
-    #     img = bpy.data.images.load(exr, check_existing=True)
-    #     flat = np.array(img.pixels[:]); bpy.data.images.remove(img)
-    #     depth = flat[0::4].reshape((RES,RES))
-    #     depth = np.flipud(depth)
-    #     np.save(os.path.join(OUT, f"depth_{i:02d}.npy"), depth)
-    #     vis = (depth - depth.min())/(depth.ptp()+1e-8)
-    #     imageio.imwrite(os.path.join(OUT, f"depth_vis_{i:02d}.png"),
-    #                     (vis*255).astype('uint8'))
-
-    #     # === 存外参
-    #     params["views"][f"{i:02d}"] = np.array(cam.matrix_world.inverted()).tolist()
-
-    # # === 写 camera.json ===
-    # with open(os.path.join(OUT, "camera.json"), "w") as f:
-    #     json.dump(params, f, indent=2)
-
-    # print("✅ 全部渲染完成，输出在", OUT)
-    # top_E = 2.0 - E 
-    top_E = -E     
-    heights = [E, top_E]  # 两层高度
+  
+    # Build 8 views at constant distance D: 4 around at z=+h*D and 4 at z=-h*D
+    # Keep distance constant so framing is consistent and avoids cropping
+    h = 0.25  # elevation fraction of D
+    z_vals = [ D * h, -D * h ]
     view_positions = []
-    for z in heights:
+    for zv in z_vals:
+        r_xy = max((D**2 - zv**2), 0.0) ** 0.5
         for i in range(4):
-            theta = 2 * math.pi * i / 4  # 0, 90, 180, 270 度
-            x = R * math.sin(theta)
-            y = R * math.cos(theta)
-            view_positions.append((x, y, z))
+            theta = 2 * math.pi * i / 4
+            x = cx + r_xy * math.sin(theta)
+            y = cy + r_xy * math.cos(theta)
+            view_positions.append((x, y, cz + zv))
 
     # === 循环渲染 ===
     for i, (x, y, z) in enumerate(view_positions):  # === 修改点 2: 使用新的视角位置 ===
@@ -582,7 +319,7 @@ if __name__ == "__main__":
         scene.frame_set(i)
 
         # 2) 设置相机位置
-        cam.location = (x, y, z)  # === 修改点 3: 使用自定义的 (x,y,z) 坐标 ===
+        cam.location = (x, y, z)
 
         # 3) 渲染（会同时输出 rgb_##.png 和 depth_##.exr）
         scene.render.image_settings.file_format = 'PNG'
