@@ -19,13 +19,6 @@ from scipy.spatial import KDTree
 from matplotlib import cm
 import argparse
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--input", type=str, required=True)
-parser.add_argument("--output", type=str, required=True)
-args = parser.parse_args()
-
-
-
 def save_voxel_index_mask(voxel_centers, voxel_colors, cam, min_bound, voxel_size):
     # 假设第一张 depth 拿来初始化shape
     depth0 = np.load(os.path.join(ROOT, f"depth_00.npy"))
@@ -127,6 +120,13 @@ def save_voxel_based_image(voxel_centers, voxel_features, depth, cam, min_bound,
 
 def save_pointcloud_projection(points, colors, cam):
     os.makedirs("result", exist_ok=True)
+    colors = np.asarray(colors)
+    if colors.ndim == 1:
+        # scalar labels -> map to RGB
+        colors = label_to_color(colors.astype(int))
+    if colors.shape[1] == 4:
+        colors = colors[:, :3]
+    assert colors.shape[1] == 3, f"colors must be Nx3, got {colors.shape}"
     kdtree = KDTree(points)
     for vid in range(N_VIEWS):
         # 初始化白底和深度缓冲
@@ -269,6 +269,7 @@ def label_to_color(labels):
     # cmap = cm.get_cmap("tab20", np.max(labels) + 1)
     # colors = cmap(labels % cmap.N)[:, :3]
     # return colors
+    labels = np.asarray(labels).astype(int).ravel()  # <-- flatten to (N,)
     cmap = cm.get_cmap("tab20", 20)  # 固定20色
     colors = cmap(labels % 20)[:, :3]
     return colors
@@ -353,173 +354,188 @@ def farthest_point_sample(xyz: torch.Tensor, K: int) -> torch.Tensor:
         farthest = torch.argmax(distances).item()
     return centroids  # (K,)
 
-# ====== 参数设置 ======
-# ROOT = os.path.expanduser("~/UAD/output/demo_views_2")
-ROOT  = os.path.expanduser(args.input)
-OUTPUT_PATH = os.path.expanduser(args.output)
-os.makedirs(OUTPUT_PATH, exist_ok=True)
-# OUTPUT_PATH = os.path.expanduser("~/UAD/result/test_cluster")
-# ROOT = os.path.expanduser("~/UAD/output/test_render")
-CAM_JSON  = os.path.join(ROOT, "camera.json")
-N_VIEWS = 8
-DEP_RANGE = (0.1, 10)
-with open(CAM_JSON, 'r') as f:
-    cam = json.load(f)
-intr = np.array(cam["intrinsic"])
-FX, _, CX = intr[0]
-_, FY, CY = intr[1]
-IMG_SIZE = 448
-FEAT_SIZE = 32  # 对应 ViT patch 数量
-
-# ====== DINOv2 模型加载 ======
-dino = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14_reg')
-dino.eval()
-normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225])
-
-# ====== 加载相机参数 ======
-with open(os.path.join(ROOT, "camera.json")) as f:
-    cam = json.load(f)
-
-all_pts, all_feats = [], []
-all_cols = []  
-
-for vid in range(N_VIEWS):
-    # === 加载图像与深度 ===
-    rgb_path = os.path.join(ROOT, f"rgb_{vid:02d}.png")
-    dep_path = os.path.join(ROOT, f"depth_{vid:02d}.npy")
-    ext = np.array(cam["views"][f"{vid:02d}"])  # 世界到相机
-    cam2world = np.linalg.inv(ext)
-
-    rgb = Image.open(rgb_path).convert("RGB")
-    col = np.array(Image.open(rgb_path)).astype(np.float32) / 255.0
-    col = col[..., :3]
-    depth = np.load(dep_path)
-
-    # === DINO 特征提取 ===
-    img_tensor = transforms.ToTensor()(rgb)
-    img_tensor = normalize(img_tensor).unsqueeze(0)
-    with torch.no_grad():
-        features_dict = dino.forward_features(img_tensor)
-        patch_tokens = features_dict['x_norm_patchtokens']  # [1, 1024, 768]
-        feat_tokens = einops.rearrange(patch_tokens, 'b (h w) c -> b c h w', h=FEAT_SIZE)
-        feat_up = F.interpolate(feat_tokens, size=(IMG_SIZE, IMG_SIZE), mode='bilinear', align_corners=False)
-        feat_flat = einops.rearrange(feat_up, 'b c h w -> b (h w) c')
-
-    # === 点云重建 ===
-    H, W = depth.shape
-    u, v = np.meshgrid(np.arange(W), np.arange(H))
-    z = depth
-    x = (u - CX) * z / FX
-    y = (v - CY) * z / FY
-    ones = np.ones_like(z)
-    pts_cam = np.stack([x, -y, -z, ones], axis=-1)  # 注意这里必须是 -y, -z
-
-    mask = (z > DEP_RANGE[0]) & (z < DEP_RANGE[1])
-    pts_world = (cam2world @ pts_cam.reshape(-1, 4).T).T[:, :3]
-    pts_world = pts_world[mask.ravel()]
-    feats = feat_flat.squeeze(0).cpu().numpy()[mask.ravel()]
-
-    all_pts.append(pts_world)
-    all_feats.append(feats)
-
-    # 颜色
-    cols = col[v, u].reshape(-1,3)
-    cols = cols[mask.ravel()]
-    all_cols.append(cols)
 
 
-# ====== 拼接 & PCA 降维颜色可视化 ======
-all_pts = np.concatenate(all_pts, axis=0)
-all_feats = np.concatenate(all_feats, axis=0)
-all_cols = np.concatenate(all_cols, axis=0)
 
-# === 2. FPS on filtered_pts ===
-xyz = torch.from_numpy(all_pts).float().cuda()  # shape: [M, 3]
-K = 20000  # or any number of final points you want
-fps_idx = farthest_point_sample(xyz, K).cpu().numpy()
 
-# === 3. 得到最终点云和特征 ===
-# final_pts = all_pts[fps_idx]       # [K, 3]
-# final_feats = all_feats[fps_idx]   # [K, C]
 
-final_pts = all_pts  # [N, 3]
-final_feats = all_feats  # [N, C]
+if __name__ == "__main__":
+    import argparse, json, os, numpy as np, torch, einops, torch.nn.functional as F
+    from PIL import Image
+    import torchvision.transforms as transforms
 
-pca = PCA(n_components=3)
-feats_pca = pca.fit_transform(final_feats)
-colors = (feats_pca - feats_pca.min()) / (feats_pca.max() - feats_pca.min())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", type=str, required=True)
+    parser.add_argument("--output", type=str, required=True)
+    args = parser.parse_args()
 
-pca_16 = PCA(n_components=16)
-feats_pca_16 = pca_16.fit_transform(final_feats)
-# ===== 平滑颜色 ======
-radius = 0.02  # 半径范围，单位与点云单位一致
+    # ====== 参数设置 ======
+    # ROOT = os.path.expanduser("~/UAD/output/demo_views_2")
+    ROOT  = os.path.expanduser(args.input)
+    OUTPUT_PATH = os.path.expanduser(args.output)
+    os.makedirs(OUTPUT_PATH, exist_ok=True)
+    # OUTPUT_PATH = os.path.expanduser("~/UAD/result/test_cluster")
+    # ROOT = os.path.expanduser("~/UAD/output/test_render")
+    CAM_JSON  = os.path.join(ROOT, "camera.json")
+    N_VIEWS = 8
+    DEP_RANGE = (0.1, 10)
+    with open(CAM_JSON, 'r') as f:
+        cam = json.load(f)
+    intr = np.array(cam["intrinsic"])
+    FX, _, CX = intr[0]
+    _, FY, CY = intr[1]
+    IMG_SIZE = 448
+    FEAT_SIZE = 32  # 对应 ViT patch 数量
 
-# 构造 point cloud 和 KDTree
-pcd = o3d.geometry.PointCloud()
-pcd.points = o3d.utility.Vector3dVector(final_pts)
-# pcd.colors = o3d.utility.Vector3dVector(colors)  # 如果 colors 是 384 维的，用前3维临时占位也可
-kdtree = o3d.geometry.KDTreeFlann(pcd)
+    # ====== DINOv2 模型加载 ======
+    dino = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14_reg')
+    dino.eval()
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                    std=[0.229, 0.224, 0.225])
 
-# 初始化平滑后的数组
-smoothed_features = np.zeros_like(feats_pca_16)
+    # ====== 加载相机参数 ======
+    with open(os.path.join(ROOT, "camera.json")) as f:
+        cam = json.load(f)
 
-for i in range(len(all_pts)):
-    [_, idxs, _] = kdtree.search_radius_vector_3d(pcd.points[i], radius)
-    smoothed_features[i] = np.mean(feats_pca_16[idxs], axis=0)
+    all_pts, all_feats = [], []
+    all_cols = []  
 
-X = smoothed_features
+    for vid in range(N_VIEWS):
+        # === 加载图像与深度 ===
+        rgb_path = os.path.join(ROOT, f"rgb_{vid:02d}.png")
+        dep_path = os.path.join(ROOT, f"depth_{vid:02d}.npy")
+        ext = np.array(cam["views"][f"{vid:02d}"])  # 世界到相机
+        cam2world = np.linalg.inv(ext)
 
-# ========== Step 1: 用子采样估计带宽 ==========
-# subset_ratio = 0.01  # 1% 子采样
-# subset_idx = np.random.choice(X.shape[0], int(subset_ratio * X.shape[0]), replace=False)
-# subset = X[subset_idx]
-# bandwidth = estimate_bandwidth(subset, quantile=0.2)
-# print(f"Estimated bandwidth: {bandwidth}")
-# bandwidth = bandwidth * 0.3
+        rgb = Image.open(rgb_path).convert("RGB")
+        col = np.array(Image.open(rgb_path)).astype(np.float32) / 255.0
+        col = col[..., :3]
+        depth = np.load(dep_path)
 
-# # # ========== Step 2: 用子采样聚类 ==========
-# ms = MeanShift(bandwidth=bandwidth, bin_seeding=True, n_jobs=-1)
-# labels = ms.fit_predict(smoothed_features)
-# print(f"MeanShift found {len(set(labels))} clusters.")
+        # === DINO 特征提取 ===
+        img_tensor = transforms.ToTensor()(rgb)
+        img_tensor = normalize(img_tensor).unsqueeze(0)
+        with torch.no_grad():
+            features_dict = dino.forward_features(img_tensor)
+            patch_tokens = features_dict['x_norm_patchtokens']  # [1, 1024, 768]
+            feat_tokens = einops.rearrange(patch_tokens, 'b (h w) c -> b c h w', h=FEAT_SIZE)
+            feat_up = F.interpolate(feat_tokens, size=(IMG_SIZE, IMG_SIZE), mode='bilinear', align_corners=False)
+            feat_flat = einops.rearrange(feat_up, 'b c h w -> b (h w) c')
 
-# mean_shift = MeanShift()
-# labels = mean_shift.fit_predict(smoothed_features)
-# print(f"MeanShift found {len(set(labels))} clusters.")
+        # === 点云重建 ===
+        H, W = depth.shape
+        u, v = np.meshgrid(np.arange(W), np.arange(H))
+        z = depth
+        x = (u - CX) * z / FX
+        y = (v - CY) * z / FY
+        ones = np.ones_like(z)
+        pts_cam = np.stack([x, -y, -z, ones], axis=-1)  # 注意这里必须是 -y, -z
 
-# 若 cluster 数太少（如 < 5），则使用 KMeans
-# if len(set(labels)) < 5:
-#     kmeans = KMeans(n_clusters=6, random_state=0)
-#     labels = kmeans.fit_predict(smoothed_features)
-feat_scaler = StandardScaler(with_mean=True, with_std=True)
-xyz_scaler  = StandardScaler(with_mean=True, with_std=True)
+        mask = (z > DEP_RANGE[0]) & (z < DEP_RANGE[1])
+        pts_world = (cam2world @ pts_cam.reshape(-1, 4).T).T[:, :3]
+        pts_world = pts_world[mask.ravel()]
+        feats = feat_flat.squeeze(0).cpu().numpy()[mask.ravel()]
 
-# F = feat_scaler.fit_transform(smoothed_features)        # (N, 16)
-# X = xyz_scaler.fit_transform(final_pts)        # (N, 3)
+        all_pts.append(pts_world)
+        all_feats.append(feats)
 
-# --- 3) Balance feature vs. spatial influence ---
-# alpha controls feature weight, beta controls spatial weight
-alpha = 1.0      # try 1.0, then tune
-beta  = 0.3      # try 0.25–1.0; increase for more spatial smoothness
-num_clu = 4
+        # 颜色
+        cols = col[v, u].reshape(-1,3)
+        cols = cols[mask.ravel()]
+        all_cols.append(cols)
 
-# Z = np.hstack([alpha * F, beta * X])           # (N, 19)
-Z = np.hstack([smoothed_features, beta * final_pts])  # (N, 19)
-# --- 4) Cluster ---
-kmeans = KMeans(n_clusters=num_clu, random_state=0)
-labels = kmeans.fit_predict(Z)
-# kmeans = KMeans(n_clusters=5, random_state=0)
-# labels = kmeans.fit_predict(smoothed_features)
-color_16 = label_to_color(labels)
-pcd = o3d.geometry.PointCloud()
-pcd.points = o3d.utility.Vector3dVector(final_pts)
-pcd.colors = o3d.utility.Vector3dVector(color_16)  
-o3d.visualization.draw_geometries([pcd], window_name="DINO Feature-Fused PointCloud")
 
-pcd_ = o3d.geometry.PointCloud()
-pcd_.points = o3d.utility.Vector3dVector(final_pts)
-o3d.io.write_point_cloud(f"{OUTPUT_PATH}/points.ply", pcd_)
-np.save(f"{OUTPUT_PATH}/labels.npy", labels)
-with open(CAM_JSON, 'r') as f:
-    cam = json.load(f)
-save_pointcloud_projection(final_pts, color_16, cam)
+    # ====== 拼接 & PCA 降维颜色可视化 ======
+    all_pts = np.concatenate(all_pts, axis=0)
+    all_feats = np.concatenate(all_feats, axis=0)
+    all_cols = np.concatenate(all_cols, axis=0)
+
+    # === 2. FPS on filtered_pts ===
+    xyz = torch.from_numpy(all_pts).float().cuda()  # shape: [M, 3]
+    K = 20000  # or any number of final points you want
+    fps_idx = farthest_point_sample(xyz, K).cpu().numpy()
+
+    # === 3. 得到最终点云和特征 ===
+    # final_pts = all_pts[fps_idx]       # [K, 3]
+    # final_feats = all_feats[fps_idx]   # [K, C]
+
+    final_pts = all_pts  # [N, 3]
+    final_feats = all_feats  # [N, C]
+
+    pca = PCA(n_components=3)
+    feats_pca = pca.fit_transform(final_feats)
+    colors = (feats_pca - feats_pca.min()) / (feats_pca.max() - feats_pca.min())
+
+    pca_16 = PCA(n_components=16)
+    feats_pca_16 = pca_16.fit_transform(final_feats)
+    # ===== 平滑颜色 ======
+    radius = 0.02  # 半径范围，单位与点云单位一致
+
+    # 构造 point cloud 和 KDTree
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(final_pts)
+    # pcd.colors = o3d.utility.Vector3dVector(colors)  # 如果 colors 是 384 维的，用前3维临时占位也可
+    kdtree = o3d.geometry.KDTreeFlann(pcd)
+
+    # 初始化平滑后的数组
+    smoothed_features = np.zeros_like(feats_pca_16)
+
+    for i in range(len(all_pts)):
+        [_, idxs, _] = kdtree.search_radius_vector_3d(pcd.points[i], radius)
+        smoothed_features[i] = np.mean(feats_pca_16[idxs], axis=0)
+
+    X = smoothed_features
+
+    # ========== Step 1: 用子采样估计带宽 ==========
+    # subset_ratio = 0.01  # 1% 子采样
+    # subset_idx = np.random.choice(X.shape[0], int(subset_ratio * X.shape[0]), replace=False)
+    # subset = X[subset_idx]
+    # bandwidth = estimate_bandwidth(subset, quantile=0.2)
+    # print(f"Estimated bandwidth: {bandwidth}")
+    # bandwidth = bandwidth * 0.3
+
+    # # # ========== Step 2: 用子采样聚类 ==========
+    # ms = MeanShift(bandwidth=bandwidth, bin_seeding=True, n_jobs=-1)
+    # labels = ms.fit_predict(smoothed_features)
+    # print(f"MeanShift found {len(set(labels))} clusters.")
+
+    # mean_shift = MeanShift()
+    # labels = mean_shift.fit_predict(smoothed_features)
+    # print(f"MeanShift found {len(set(labels))} clusters.")
+
+    # 若 cluster 数太少（如 < 5），则使用 KMeans
+    # if len(set(labels)) < 5:
+    #     kmeans = KMeans(n_clusters=6, random_state=0)
+    #     labels = kmeans.fit_predict(smoothed_features)
+    feat_scaler = StandardScaler(with_mean=True, with_std=True)
+    xyz_scaler  = StandardScaler(with_mean=True, with_std=True)
+
+    # F = feat_scaler.fit_transform(smoothed_features)        # (N, 16)
+    # X = xyz_scaler.fit_transform(final_pts)        # (N, 3)
+
+    # --- 3) Balance feature vs. spatial influence ---
+    # alpha controls feature weight, beta controls spatial weight
+    alpha = 1.0      # try 1.0, then tune
+    beta  = 0.3      # try 0.25–1.0; increase for more spatial smoothness
+    num_clu = 4
+
+    # Z = np.hstack([alpha * F, beta * X])           # (N, 19)
+    Z = np.hstack([smoothed_features, beta * final_pts])  # (N, 19)
+    # --- 4) Cluster ---
+    kmeans = KMeans(n_clusters=num_clu, random_state=0)
+    labels = kmeans.fit_predict(Z)
+    # kmeans = KMeans(n_clusters=5, random_state=0)
+    # labels = kmeans.fit_predict(smoothed_features)
+    color_16 = label_to_color(labels)
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(final_pts)
+    pcd.colors = o3d.utility.Vector3dVector(color_16)  
+    o3d.visualization.draw_geometries([pcd], window_name="DINO Feature-Fused PointCloud")
+
+    pcd_ = o3d.geometry.PointCloud()
+    pcd_.points = o3d.utility.Vector3dVector(final_pts)
+    o3d.io.write_point_cloud(f"{OUTPUT_PATH}/points.ply", pcd_)
+    np.save(f"{OUTPUT_PATH}/labels.npy", labels)
+    with open(CAM_JSON, 'r') as f:
+        cam = json.load(f)
+    save_pointcloud_projection(final_pts, color_16, cam)
