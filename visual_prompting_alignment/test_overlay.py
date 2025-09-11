@@ -8,30 +8,30 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--rgb_dir', type=str, required=True, help="Path to rendered RGB images")
 parser.add_argument('--cluster_dir', type=str, required=True, help="Path to projected cluster images")
 parser.add_argument('--output_path', type=str, required=True, help="Path to save overlay output")
+parser.add_argument('--label_path', type=str, required=False, help="Path to cluster labels (npy file)")
 args = parser.parse_args()
 
 rgb_dir = os.path.expanduser(args.rgb_dir)
 cluster_dir = os.path.expanduser(args.cluster_dir)
 output_path = os.path.expanduser(args.output_path)
 
-label_path = os.path.join(cluster_dir, "labels.npy")
+label_path = args.label_path
 labels = np.load(label_path)
+labels = labels.astype(np.int32)
+print(f"Loaded labels, shape: {labels.shape}")
 indices = sorted(np.unique(labels).tolist())
+print("Unique cluster indices:", indices)
 # 提取所有index
 # indices = [int(item["index"]) for item in data]
 # indices = [0, 1, 2, 3, 4, 5, 6]  # 示例数据
 # indices = [0, 1, 2, 3, 4]
 # indices = [2, 2, 2, 2, 2, 2, 2]  # 示例数据
 n_views = 8  
-
 tab20 = cm.get_cmap("tab20", 20)
 tab20_colors = (tab20(np.arange(20))[:, :3] * 255).astype(np.uint8)
 
 
-
 # ==== 提取需要保留的RGB ====
-# target_rgbs = [tab20_colors[index] for index in indices]
-# print("Selected target RGBs:", target_rgbs)
 for index in indices:
     target_rgbs = [tab20_colors[index]]
     print(f"Selected target RGB for index {index}: {target_rgbs}")
