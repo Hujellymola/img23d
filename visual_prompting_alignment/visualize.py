@@ -118,95 +118,95 @@ def save_voxel_based_image(voxel_centers, voxel_features, depth, cam, min_bound,
         plt.imsave(f"result/_dense_voxel_proj_{vid:02d}.png", proj_img)
         print(f"✅ 已保存致密 2D 投影图像至 result/dense_voxel_proj{vid:02d}.png")
 
-# def save_pointcloud_projection(points, colors, cam):
-#     os.makedirs("result", exist_ok=True)
-#     colors = np.asarray(colors)
-#     if colors.ndim == 1:
-#         # scalar labels -> map to RGB
-#         colors = label_to_color(colors.astype(int))
-#     if colors.shape[1] == 4:
-#         colors = colors[:, :3]
-#     assert colors.shape[1] == 3, f"colors must be Nx3, got {colors.shape}"
-#     kdtree = KDTree(points)
-#     for vid in range(N_VIEWS):
-#         # 初始化白底和深度缓冲
-#         proj_img = np.ones((H, W, 3), dtype=np.float32)
-#         depth_buffer = np.ones((H, W), dtype=np.float32) * 1e5
-
-#         # 加载深度图（与原逻辑保持一致）
-#         dep_path = os.path.join(ROOT, f"depth_{vid:02d}.npy")
-#         depth = np.load(dep_path)  # H×W
-
-#         # 相机外参（世界->相机）矩阵反转
-#         ext = np.array(cam["views"][f"{vid:02d}"])  # 世界到相机
-#         cam2world = np.linalg.inv(ext)
-
-#         for i in range(H):
-#             for j in range(W):
-#                 z = depth[i, j]
-#                 if z <= 1e-5 or z >= 10.0:
-#                     continue
-
-#                 x = (j - CX) * z / FX
-#                 y = (i - CY) * z / FY
-#                 cam_point = np.array([x, -y, -z, 1.0])  # Blender 坐标系处理
-#                 world_point = cam2world @ cam_point
-#                 world_xyz = world_point[:3]
-
-#                 # --- 最近点搜索 (可选: KDTree) ---
-#                 # 这里用最近邻找颜色（稠密点云可以近似）
-#                 dist, idx = kdtree.query(world_xyz)
-#                 color = colors[idx]
-
-#                 # --- 深度缓存 ---
-#                 if z < depth_buffer[i, j]:
-#                     depth_buffer[i, j] = z
-#                     proj_img[i, j] = color
-
-#         # 保存图像
-#         out_path = f"{OUTPUT_PATH}/pointcloud_proj_{vid:02d}.png"
-#         plt.imsave(out_path, proj_img)
-#         print(f"✅ 已保存点云投影图像至 {out_path}")
-
 def save_pointcloud_projection(points, colors, cam):
+    os.makedirs("result", exist_ok=True)
     colors = np.asarray(colors)
-    if colors.ndim == 1: colors = label_to_color(colors.astype(int))
-    if colors.shape[1] == 4: colors = colors[:, :3]
-    assert colors.shape[1] == 3
-
+    if colors.ndim == 1:
+        # scalar labels -> map to RGB
+        colors = label_to_color(colors.astype(int))
+    if colors.shape[1] == 4:
+        colors = colors[:, :3]
+    assert colors.shape[1] == 3, f"colors must be Nx3, got {colors.shape}"
     kdtree = KDTree(points)
     for vid in range(N_VIEWS):
+        # 初始化白底和深度缓冲
         proj_img = np.ones((H, W, 3), dtype=np.float32)
-        depth_buffer = np.ones((H, W), dtype=np.float32) * 1e9
-        
-        depth = np.load(os.path.join(ROOT, f"depth_{vid:02d}.npy"))
-        ext = np.array(cam["views"][f"{vid:02d}"])          # world->cam
+        depth_buffer = np.ones((H, W), dtype=np.float32) * 1e5
+
+        # 加载深度图（与原逻辑保持一致）
+        dep_path = os.path.join(ROOT, f"depth_{vid:02d}.npy")
+        depth = np.load(dep_path)  # H×W
+
+        # 相机外参（世界->相机）矩阵反转
+        ext = np.array(cam["views"][f"{vid:02d}"])  # 世界到相机
         cam2world = np.linalg.inv(ext)
-        R = cam2world[:3, :3]
-        t = cam2world[:3, 3]
 
         for i in range(H):
-            yi = (i - CY) / FY
             for j in range(W):
-                d = float(depth[i, j])
-                if not (0.1 <= d <= 10.0):  # your DEP_RANGE
+                z = depth[i, j]
+                if z <= 1e-5 or z >= 10.0:
                     continue
-                xi = (j - CX) / FX
-                # camera-space ray (Blender: -Z forward, Y up)
-                dir_cam = np.array([xi, -yi, -1.0], dtype=np.float32)
-                dir_cam /= np.linalg.norm(dir_cam) + 1e-12
-                world_xyz = t + d * (R @ dir_cam)
 
-                _, idx = kdtree.query(world_xyz)
+                x = (j - CX) * z / FX
+                y = (i - CY) * z / FY
+                cam_point = np.array([x, -y, -z, 1.0])  # Blender 坐标系处理
+                world_point = cam2world @ cam_point
+                world_xyz = world_point[:3]
+
+                # --- 最近点搜索 (可选: KDTree) ---
+                # 这里用最近邻找颜色（稠密点云可以近似）
+                dist, idx = kdtree.query(world_xyz)
                 color = colors[idx]
-                if d < depth_buffer[i, j]:
-                    depth_buffer[i, j] = d
-                    proj_img[i, j] = color
-                # proj_img[i, j] = colors[idx]
 
+                # --- 深度缓存 ---
+                if z < depth_buffer[i, j]:
+                    depth_buffer[i, j] = z
+                    proj_img[i, j] = color
+
+        # 保存图像
         out_path = f"{OUTPUT_PATH}/pointcloud_proj_{vid:02d}.png"
-        plt.imsave(out_path, np.clip(proj_img, 0, 1))
-        print(f"saved {out_path}")
+        plt.imsave(out_path, proj_img)
+        print(f"✅ 已保存点云投影图像至 {out_path}")
+
+# def save_pointcloud_projection(points, colors, cam):
+#     colors = np.asarray(colors)
+#     if colors.ndim == 1: colors = label_to_color(colors.astype(int))
+#     if colors.shape[1] == 4: colors = colors[:, :3]
+#     assert colors.shape[1] == 3
+
+#     kdtree = KDTree(points)
+#     for vid in range(N_VIEWS):
+#         proj_img = np.ones((H, W, 3), dtype=np.float32)
+#         depth_buffer = np.ones((H, W), dtype=np.float32) * 1e9
+        
+#         depth = np.load(os.path.join(ROOT, f"depth_{vid:02d}.npy"))
+#         ext = np.array(cam["views"][f"{vid:02d}"])          # world->cam
+#         cam2world = np.linalg.inv(ext)
+#         R = cam2world[:3, :3]
+#         t = cam2world[:3, 3]
+
+#         for i in range(H):
+#             yi = (i - CY) / FY
+#             for j in range(W):
+#                 d = float(depth[i, j])
+#                 if not (0.1 <= d <= 10.0):  # your DEP_RANGE
+#                     continue
+#                 xi = (j - CX) / FX
+#                 # camera-space ray (Blender: -Z forward, Y up)
+#                 dir_cam = np.array([xi, -yi, -1.0], dtype=np.float32)
+#                 dir_cam /= np.linalg.norm(dir_cam) + 1e-12
+#                 world_xyz = t + d * (R @ dir_cam)
+
+#                 _, idx = kdtree.query(world_xyz)
+#                 color = colors[idx]
+#                 if d < depth_buffer[i, j]:
+#                     depth_buffer[i, j] = d
+#                     proj_img[i, j] = color
+#                 # proj_img[i, j] = colors[idx]
+
+#         out_path = f"{OUTPUT_PATH}/pointcloud_proj_{vid:02d}.png"
+#         plt.imsave(out_path, np.clip(proj_img, 0, 1))
+#         print(f"saved {out_path}")
 
 def render_voxel_mesh(voxel_mesh, cam, name="test_proj"):
         # === 一次性初始化渲染器与场景 ===
