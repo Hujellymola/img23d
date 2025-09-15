@@ -37,7 +37,7 @@ for object_dir in "$DATA_DIR/glb"/*; do
             "$object_dir" \
             "$output_dir" \
                 --output_format pointcloud \
-                --n_points 10000 \
+                --n_points 20000 \
                 --max_faces 50000 \
                 --seed 42
             

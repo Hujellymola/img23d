@@ -3,9 +3,6 @@ DATA_DIR="/home/stud/bbo/projects/img23d/data"
 PARTFIELD_DIR="/home/stud/bbo/projects/img23d/dependencies/PartField"
 OUTPUT_DIR="/home/stud/bbo/projects/img23d/img23d/output/clustering_output"
 MAX_CLUSTERS=10
-sample_name="stapler"
-
-
 
 cd "$PARTFIELD_DIR" || { echo "PartField directory not found! Exiting."; exit 1; }
 

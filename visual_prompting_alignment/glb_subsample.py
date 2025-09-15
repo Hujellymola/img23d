@@ -80,8 +80,8 @@ def main():
     parser.add_argument("input_path", help="Input GLB file or directory containing GLB files")
     parser.add_argument("output_dir", help="Output directory for processed files")
     parser.add_argument("--max_faces", type=int, default=50000, help="Maximum number of faces for mesh subsampling")
-    parser.add_argument("--n_points", type=int, default=10000, help="Number of points for point cloud conversion")
-    parser.add_argument("--output_format", choices=["mesh", "pointcloud", "both"], default="both", 
+    parser.add_argument("--n_points", type=int, default=20000, help="Number of points for point cloud conversion")
+    parser.add_argument("--output_format", choices=["mesh", "pointcloud", "both"], default="pointcloud", 
                        help="Output format: mesh (OBJ), pointcloud (PLY), or both")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible subsampling")
     
@@ -131,7 +131,7 @@ def main():
         
         if args.output_format in ["pointcloud", "both"]:
             points, normals = mesh_to_point_cloud(mesh, args.n_points)
-            pc_output_path = output_dir / f"{base_name}_pointcloud.ply"
+            pc_output_path = output_dir / f"{base_name}.ply"
             save_point_cloud(points, normals, pc_output_path)
             print(f"Saved point cloud ({len(points)} points) to {pc_output_path}")
         
