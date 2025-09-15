@@ -5,7 +5,7 @@
 DATA_DIR="/home/stud/bbo/projects/img23d/data/pcd"
 PARTFIELD_DIR="/home/stud/bbo/projects/img23d/dependencies/PartField"
 OUTPUT_DIR="/home/stud/bbo/projects/img23d/img23d/output/clustering_output"
-MAX_CLUSTERS=5
+MAX_CLUSTERS=10
 
 # Colors for output
 RED='\033[0;31m'
