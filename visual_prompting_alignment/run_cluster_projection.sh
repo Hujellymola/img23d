@@ -1,8 +1,9 @@
-MODEL_NAME="robot_arm"
+MODEL_NAME="paper_drawer"
+CLUSTERS=05
 BLENDER_OUT="$HOME/projects/img23d/img23d/output/render_output/${MODEL_NAME}"
 CLUSTER_PROJECTION_OUT="$HOME/projects/img23d/img23d/output/projection_output/${MODEL_NAME}"
-ORIG_POINTS_PLY="$HOME/projects/img23d/dependencies/PartField/exp_results/clustering/splat/ply/${MODEL_NAME}/sample_pointcloud_0_06.ply"
-CLUSTERING_NPY="$HOME/projects/img23d/dependencies/PartField/exp_results/clustering/splat/cluster_out/${MODEL_NAME}/sample_pointcloud_0_06.npy"
+ORIG_POINTS_PLY="$HOME/projects/img23d/img23d/output/clustering_output/${MODEL_NAME}/${MODEL_NAME}_*_${CLUSTERS}.ply"
+CLUSTERING_NPY="$HOME/projects/img23d/img23d/output/clustering_output/${MODEL_NAME}/${MODEL_NAME}_*_${CLUSTERS}.npy"
 
 python sample_color_from_cluster.py \
     --input $BLENDER_OUT \
